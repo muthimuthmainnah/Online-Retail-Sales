@@ -1,0 +1,146 @@
+CREATE TABLE raw_online_retail (
+    InvoiceNo VARCHAR(20),
+    StockCode VARCHAR(20),
+    Description VARCHAR(255),
+    Quantity VARCHAR(20),
+    InvoiceDate VARCHAR(20),
+    UnitPrice VARCHAR(20),
+    CustomerID VARCHAR(20),
+    Country VARCHAR(50)
+);
+
+-- Create a clean table structure
+DROP TABLE IF EXISTS online_retail_main;
+
+CREATE TABLE online_retail_main AS
+SELECT
+    InvoiceNo,
+    StockCode,
+    Description,
+    -- Replace comma with dot, then cast to numeric
+    REPLACE(Quantity, ',', '.')::NUMERIC AS quantity,
+    
+    -- Parse the date format DD/MM/YYYY HH:MI
+    TO_TIMESTAMP(InvoiceDate, 'DD/MM/YYYY HH24:MI') AS invoice_date,
+    
+    -- Replace comma with dot, then cast to numeric
+    REPLACE(UnitPrice, ',', '.')::NUMERIC AS unit_price,
+    
+    CustomerID,
+    Country
+FROM raw_online_retail;
+
+-- Remove rows with missing CustomerID
+DELETE FROM online_retail_main
+WHERE CustomerID IS NULL OR CustomerID = '';
+
+-- Identify and remove cancellations (InvoiceNo starts with 'C')
+-- Optional: You might want to keep these in a separate table for "Returns Analysis"
+DELETE FROM online_retail_main
+WHERE InvoiceNo LIKE 'C%';
+
+-- Remove records with negative/zero quantity or price
+DELETE FROM online_retail_main
+WHERE quantity <= 0 OR unit_price <= 0;
+
+-- Final Check
+SELECT COUNT(*) FROM online_retail_main;
+
+SELECT 
+    COUNT(DISTINCT InvoiceNo) AS total_orders,
+    COUNT(DISTINCT CustomerID) AS total_customers,
+    SUM(quantity * unit_price) AS total_revenue,
+    ROUND(AVG(quantity * unit_price), 2) AS avg_order_value
+FROM online_retail_main;
+
+SELECT 
+    TO_CHAR(invoice_date, 'YYYY-MM') AS sales_month,
+    COUNT(DISTINCT InvoiceNo) AS total_orders,
+    SUM(quantity * unit_price) AS total_revenue
+FROM online_retail_main
+GROUP BY 1
+ORDER BY 1;
+
+SELECT 
+    StockCode,
+    Description,
+    SUM(quantity) AS total_units_sold,
+    SUM(quantity * unit_price) AS total_revenue
+FROM online_retail_main
+GROUP BY 1, 2
+ORDER BY 4 DESC
+LIMIT 10;
+
+WITH rfm_base AS (
+    SELECT 
+        CustomerID,
+        -- Days since last purchase (assuming analysis date is 2011-12-10)
+        ('2011-12-10'::DATE - MAX(invoice_date)::DATE) AS recency,
+        COUNT(DISTINCT InvoiceNo) AS frequency,
+        SUM(quantity * unit_price) AS monetary
+    FROM online_retail_main
+    GROUP BY CustomerID
+),
+rfm_scores AS (
+    SELECT 
+        CustomerID,
+        recency,
+        frequency,
+        monetary,
+        NTILE(5) OVER (ORDER BY recency ASC) as r_score, -- 5 is best (most recent)
+        NTILE(5) OVER (ORDER BY frequency ASC) as f_score, -- 5 is best (most frequent)
+        NTILE(5) OVER (ORDER BY monetary ASC) as m_score  -- 5 is best (highest spend)
+    FROM rfm_base
+)
+-- Segment Customers
+SELECT 
+    CustomerID,
+    recency,
+    frequency,
+    monetary,
+    r_score,
+    f_score,
+    m_score,
+    CASE 
+        WHEN r_score = 5 AND f_score = 5 AND m_score = 5 THEN 'Champions'
+        WHEN r_score >= 3 AND f_score >= 3 AND m_score >= 3 THEN 'Loyal Customers'
+        WHEN r_score <= 2 AND f_score <= 2 AND m_score <= 2 THEN 'At Risk'
+        ELSE 'Standard'
+    END AS customer_segment
+FROM rfm_scores
+ORDER BY monetary DESC;
+
+-- Create a summary table for Customer Segmentation
+CREATE TABLE customer_rfm_segments AS
+WITH rfm_base AS (
+    SELECT 
+        CustomerID,
+        ('2011-12-10'::DATE - MAX(invoice_date)::DATE) AS recency,
+        COUNT(DISTINCT InvoiceNo) AS frequency,
+        SUM(quantity * unit_price) AS monetary
+    FROM online_retail_main
+    GROUP BY CustomerID
+),
+rfm_scores AS (
+    SELECT 
+        *,
+        NTILE(5) OVER (ORDER BY recency ASC) as r_score,
+        NTILE(5) OVER (ORDER BY frequency ASC) as f_score,
+        NTILE(5) OVER (ORDER BY monetary ASC) as m_score
+    FROM rfm_base
+)
+SELECT 
+    CustomerID,
+    recency,
+    frequency,
+    monetary,
+    r_score,
+    f_score,
+    m_score,
+    CASE 
+        WHEN r_score = 5 AND f_score = 5 AND m_score = 5 THEN 'Champions'
+        WHEN r_score >= 3 AND f_score >= 3 AND m_score >= 3 THEN 'Loyal Customers'
+        WHEN r_score <= 2 AND f_score <= 2 AND m_score <= 2 THEN 'At Risk'
+        ELSE 'Standard'
+    END AS customer_segment
+FROM rfm_scores;
