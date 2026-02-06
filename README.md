@@ -58,4 +58,4 @@ To run the SQL queries in this project, follow these steps:
 
 ## 👤 Author
 
-* **[Your Name]** - [Link to your portfolio or LinkedIn profile]
+* **Muthmainnah** - https://www.notion.so/Muthmainnah-s-Portfolio-297641a84f1880869b42e875a69c3a6e?source=copy_link
